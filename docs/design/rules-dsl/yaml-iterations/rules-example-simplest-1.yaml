@@ -1,0 +1,84 @@
+# Example rules definition for creating a file share.
+
+# This rules definition requires that the following pre-conditions
+# are satisfied:
+
+# - That a DOMAIN-ARTIFACT collection called *volume* already exists in the
+#   database.
+# - That a *volume* has a *space-available* FLOAT field (GiB)
+# - That a *volume* has a *id* STRING field.
+
+# todo say that there must be a file-share artifact too
+
+# - There is an Ansible playbook called *create-volume*.
+# - That this playbook takes a single argument of type FLOAT, called
+#   *required-size* and that the value given is in GiB.
+# - That the returned values from running this playbook are:
+#    - *id* STRING
+
+# - There is an Ansible playbook called *create-share*.
+# - That this playbook takes arguments:
+#    -  *vol-id* STRING
+#    -  *share-name* STRING
+#    -  *required-size* FLOAT (GiB)
+
+TITLE: Create-File-Share-On-Unspecified-Volume
+
+PROPERTIES:
+  size: FLOAT  # Gib
+
+ENTITIES:
+  vol-entity:
+    id: STRING
+    space-available: size
+
+PARAMS:
+    required-size: size
+    share-name: STRING
+  
+RULES:
+  - VARS:
+    - candidate-volumes LIST[vol-entity]
+    - candidate vol-entity
+    - vol-id STRING
+    - vol-to-use vol-entity
+
+  - IMPACT CREATES volume file-share
+  - FOREACH vol IN GET volume:
+    - IF vol.space-available > required-size:
+        - ASSIGN candidate.id = vol.id
+        - ASSIGN candidate.space-available = vol.space-available
+        - APPEND candidate-volumes candidate
+  - IF candidate-volumes.COUNT == 0:
+    - RUN-PLAYBOOK create-volume (required-size * 10) OUT vol-id another-var
+  - ELSE:
+    - ASSIGN vol-to-use = candidate-volumes[0]
+    - ASSIGN vol-id = vol-to-use.id
+  - RUN-PLAYBOOK create-share vol-id share-name required-size
+
+
+  todo
+
+  we could make the dsl 'uglier' more verbose and structured and shift some 
+  of the parsing and structuring responsibility back to native YAML modelling.
+
+  we know today that impacts need to be accurate, complete, idempotent
+  
+  we need to be able to query for a DI to already exist and treat that 
+  as a planning phase failure trigger
+
+  the create has to be more granular and communicate to the outside world
+  whether it did, or what name it is going to use etc. consider 250k shares and
+  100k volumes.
+
+  what if second playbook fails - we need a way to back out the stuff the first
+  one did. playbook have rescue blocks - so rules must only run one playbook
+
+  potential solutions - have two playbooks one that creates vol (always) and one 
+  that uses an existing one always. Or, just the first but taking a bool create vol flag.
+  
+  look at terraform, puppet approach to mixing DSL and python
+
+  https://github.com/terraform-providers/terraform-provider-aws/tree/master/examples/rds
+
+  https://github.com/terraform-providers/terraform-provider-aws/tree/master/examples/lambda-file-systems

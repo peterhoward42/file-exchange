@@ -1,0 +1,134 @@
+
+TITLE: Create-File-Share-On-Unspecified-Volume
+
+DOMAIN-ARTIFACTS-REFERENCED:
+  - host-array
+  - volume
+  - file-share 
+
+PROPERTIES:
+  size: FLOAT
+
+MODULE-INPUTS:
+    required-size: size
+    name-for-share: STRING
+
+VARS:
+  candidate-volumes:
+    TYPE: LIST
+    MEMBER-TYPE: vol-entity
+  candidate:
+    TYPE: vol-entity
+  vol-id:
+    TYPE: STRING
+  vol-to-use:
+    TYPE: vol-entity
+  
+RULES:
+
+  volume-create:
+    RULE-INPUTS:
+      required-space:
+        TYPE: size
+      volume-name:
+        TYPE: STRING
+    RULE-OUTPUTS:
+      host-array:
+        TYPE: host-array
+    STEPS:
+      - ACTION: RUN-PLAYBOOK
+        PLAYBOOK: volume-create
+        CALL-ARGS:
+          volume-size: required-space
+          volume-name: volume-name
+        RESULT-PROCESSING:
+          SET-RETURN-VALUES:
+            host-array: 
+              SOURCE:
+                FIELD-IN-RESULT:
+                  FIELD: host-array         
+
+  volume-filter:
+    RULE-INPUTS:
+      space-needed:
+        TYPE: size
+    RULE-OUTPUTS:
+      volumes:
+        TYPE: LIST
+        MEMBER-TYPE: volume
+    STEPS:
+      - ACTION: CALL-GET
+        ARTIFACT: volume
+        INCLUDE:
+          - OPERATOR: >
+            LHS: space-available
+            RHS: space-needed
+        RESULT-PROCESSING:
+          SET-RETURN-VALUES:
+            volumes:
+              SOURCE:
+                ENTIRE-RESULT
+
+  volume-selector:
+    RULE-INPUTS:
+      space-needed:
+        TYPE: size
+    RULE-OUTPUTS:
+      chosen-volume:
+        TYPE: volume
+    STEPS:
+      - ACTION: CALL-RULE
+        RULE: volume-filter
+        CALL-ARGS:
+          space-needed: DOMAIN-ARTIFACT:space-needed
+        RESULT-PROCESSING:
+          SET-RETURN-VALUES:
+            chosen-volume:
+              SOURCE: ENTIRE-RESULT
+              TRANSFORMATIONS:
+                - CHOOSE-FIRST-IN-LIST
+
+  create-share-on-unspecified-volume:
+    RULE-INPUTS:
+      space-needed:
+        TYPE: size
+    RULE-OUTPUTS:
+      share-created:
+        TYPE:file-share
+    STEPS:
+      - ACTION: CALL-RULE
+        RULE: volume-selector
+        CALL-ARGS:
+          space-needed: space-needed
+        RESULT-PROCESSING:
+          SET-VARIABLE:
+            chosen-volume:
+              SOURCE: ENTIRE-RESULT
+      - CONDITIONAL-IF:
+        OPERATOR: IS-NONE:
+        WHAT:
+          SOURCE: chosen-volume
+        CASE-TRUE:
+          ACTION: CALL-RULE
+          RULE: volume-create
+          CALL-ARGS:
+            required-space:
+              SOURCE: space-needed
+              TRANSFORMATIONS:
+                - OPERATOR: UNARY-MULTIPLY
+                  MULTIPLIER: 10               
+          RESULT-PROCESSING:
+            SET-VARIABLE:
+              chosen-volume:
+                SOURCE: ENTIRE-RESULT
+      - ACTION: CALL-RULE
+        RULE: create-share-on-existing-volume
+        CALL-ARGS:
+          volume: volume
+          size-required: space-needed
+        RESULT-PROCESSING:
+          SET-RETURN-VALUES:
+            share-created:
+              SOURCE: ENTIRE-RESULT
+            
+

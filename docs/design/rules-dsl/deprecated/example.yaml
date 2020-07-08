@@ -1,0 +1,104 @@
+---
+# Upper case words are DSL keywords recognized by the API.
+
+# This YAML uses the following DSL KEYWORDS:
+
+# >
+# ACTION
+# CALL-RULE
+# CHOOSE-FIRST
+# ENTITIES
+# ENTITY-TYPE
+# IF
+# FILTER
+# INT
+# ON-FALSE-ACTION
+# PARAMS
+# PLAYBOOK
+# PREVIOUS-RESULT
+# PROPERTIES
+# RUN-PLAYBOOK
+# RULES
+# STEPS
+# STRING
+
+# All the other words have meaning only to the author of the YAML.
+
+PROPERTIES:
+  size-in-gb: INT
+
+ENTITIES:
+  volume:
+    PROPERTIES:
+      - available-space: size-gb
+
+RULES:
+
+  
+  volume-create:
+    PARAMS:
+      required-space: size-in-gb
+    STEPS:
+      - ACTION: RUN-PLAYBOOK
+        PLAYBOOK: some-playbook-name
+        PARAMS:
+          playbook-required-space: required-space
+
+  volume-filter:
+    PARAMS:
+      required-space: size-in-gb
+    STEPS:
+      - ACTION: GET
+        ENTITY-TYPE: volume
+        FILTER:
+         available-space > required-space
+
+  volume-selector:
+    PARAMS:
+      required-space: size-gb
+    STEPS:
+      - ACTION: CALL-RULE
+        RULE:
+          NAME: volume-filter
+          PARAMS:
+            required-space: required-space
+      - ACTION: CHOOSE-FIRST # better if we offer property-based choice criteria
+
+  create-share-on-existing-volume:
+    PARAMS:
+      volume-name: STRING
+      required-space: INT
+    STEPS:
+      - ACTION: RUN-PLAYBOOK
+        PLAYBOOK: some-playbook-name
+        PARAMS:
+          playbook-name-parameter: volume-name
+          playbook-required-space: required-space
+
+  create-share-on-unspecified-volume:
+    PARAMS:
+      required-space: required-space
+    STEPS:
+      - ACTION: CALL-RULE
+        RULE:
+          NAME: volume-selector
+          PARAMS:
+            required-space: required-space
+      - ON-FALSE-ACTION: # more open conditions that access properties of "found" object
+          ACTION: CALL-RULE
+          RULE:
+            NAME: create-volume
+            PARAMS:
+              required-space: required-space
+      - ACTION: CALL-RULE
+        RULE:
+          NAME: create-share-on-existing-volume
+          PARAMS:
+            volume-name: PREVIOUS-RESULT
+            required-space: required-space
+
+
+
+
+
+

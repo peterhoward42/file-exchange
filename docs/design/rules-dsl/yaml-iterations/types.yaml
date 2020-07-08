@@ -1,0 +1,14 @@
+TYPES:
+  room_t:
+    MAP:
+      area: FLOAT
+      name: STRING
+  rooms_t:
+    LIST:
+      room_t
+
+  house_t:
+    MAP:
+      rooms: rooms_t
+
+  

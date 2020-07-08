@@ -1,0 +1,340 @@
+TITLE: Create-File-Share-On-Unspecified-Volume
+
+ 
+
+DOMAIN-ARTIFACTS-REFERENCED:
+
+  - host-array # storage controller to create the volume or share
+
+  - host-aggregate # where to create the volume
+
+  - volume # volume container to be created or reused
+
+  - file-share # file share to be created
+
+ 
+
+PROPERTIES:
+
+ 
+
+MODULE-INPUTS:
+
+    required-size: FLOAT
+
+    name-for-share: STRING
+
+ 
+
+VARS:
+
+  candidate-volumes:
+
+    TYPE: LIST
+
+    MEMBER-TYPE: DOMAIN_ARTIFACT:volume
+
+  candidate:
+
+    TYPE: DOMAIN_ARTIFACT:volume
+
+  last-volume-name:
+
+     TYPE: STRING
+
+  vol-id:
+
+    TYPE: STRING
+
+  vol-to-use:
+
+    TYPE: DOMAIN_ARTIFACT:volume
+
+  new-share:
+
+    TYPE: DOMAIN_ARTIFACT:file-share
+
+   
+
+- Domain artifacts
+
+- custom entities
+
+ 
+
+RULES:
+
+ 
+
+  - NAME: "Get suitable volumes"
+
+    ACTION: FIND-DB
+
+    ACTION_PARAMS:
+
+      - INPUT:
+
+          - NAME: size
+
+            TYPE: FLOAT
+
+      - OUTPUT:
+
+          - TYPE: DOMAIN_ARTIFACT:volume
+
+          - ASSIGN: candidate-volumes
+
+      - QUERY: "{volume (size_available > ACTION_INPUT.size) {
+
+                name
+
+                size_available
+
+                host-array{
+
+                  name
+
+                  }
+
+                }}"
+
+ 
+
+  - NAME: "Check if a candidate volume is found"
+
+    ACTION: CONDITION-IF
+
+    ACTION_PARAMS:
+
+      - CONDITION: "candidate-volumes.FOUND == true"
+
+        ACTIONS_WHEN_TRUE:
+
+          - NAME: "Sort suitable volume"
+
+            ACTION: ITERATE-LIST
+
+            ACTION_PARAMS:
+
+              - INPUT:
+
+                  - NAME: candidate-volumes
+
+                    TYPE: LIST:volume
+
+              - ITERATION_TYPE: LIST
+
+              - ITERATION_VARIABLE_NAME: "suitable_volume"
+
+              - INDEX_VARIABLE_NAME: "volume_index1"
+
+              - ACTIONS:
+
+                  - NAME: "Swap by most available space"
+
+                    ACTION: CONDITION-IF
+
+                    ACTION_PARAMS:
+
+                      - CONDITION: "not (candidate) || candidate.size_available > suitable_volume.size_available"
+
+                        ACTION_WHEN_TRUE:
+
+                            - NAME: "assign or update candidate"
+
+                              ACTION: UPDATE-VARIABLE
+
+                              ACTION_PARAMS:
+
+                                - VARIABLE: candidate
+
+                                - VALUE:
+
+                                  - size: "suitable_volume.size"
+
+                                  - name: "suitable_volume.name"
+
+                                  - size_available: "suitable_volume.size_available"
+
+          
+
+          - NAME: "Modify existing volume"
+
+              ACTION: IMPACT-MODIFY
+
+              ACTION_PARAMS:
+
+                - VARIABLE:  vol-to-use
+
+                - VALUE:  # this needs decomposing into the individual values
+
+                    - size: "suitable_volume.size"
+
+                    - name: "suitable_volume.name"
+
+                    - size_available: "suitable_volume.size_available - user_input.required-size"
+
+ 
+
+      - CONDITION: ELSE
+
+        ACTIONS_WHEN_TRUE:
+
+        - NAME: "Find latest volume name"
+
+          ACTION: FIND-DB
+
+          ACTION_PARAMS:
+
+            - INPUT:
+
+            - OUTPUT:
+
+                - TYPE: STRING
+
+                - ASSIGN:  last-volume-name
+
+            - QUERY: "{volume {
+
+                      name (order by, desc)
+
+                      }} limit 1"
+
+        - NAME: "create new volume"
+
+          ACTION: IMPACT-CREATE
+
+          ACTION_PARAMS:
+
+            - VARIABLE:  vol-to-use
+
+            - VALUE:
+
+                - size: "4000"
+
+                - name: "last-volume-name.substring(0,-3) + (last-volume-name.substring(-3) + 1 )"
+
+                - size_available: "4000 - user_input.required-size"
+
+
+
+
+  - NAME: "Create share"
+
+      ACTION: IMPACT-CREATE
+
+      ACTION_PARAMS:
+
+        - VARIABLE:  new-share
+
+        - VALUE:
+
+            - size: "user_input.required-size"
+
+            - name: "user_input.name-for-share"
+
+            - volume: vol-to-use
+
+ 
+
+           
+
+ - NAME: "decide which playbook to run"
+
+    ACTION: CONDITION-IF
+
+    ACTION_PARAMS:
+
+      - CONDITION: "candidate-volumes.FOUND == true"
+
+        ACTIONS_WHEN_TRUE:
+
+         - NAME: "Call playbook to create just share"
+
+            ACTION: ANSIBLE-RUN
+
+            ACTION_PARAMS:
+
+                - PLAYBOOK: "Create share in existing volume"
+
+                - INPUTS:
+
+                    - share-name: "user_input.name-for-share"
+
+                    - share-size: "user_input.required-size"
+
+                    - volume-name: "vol-to-use.name"
+
+                    - controller-name: "vol-to-use.host-array.name"
+
+                - OUTPUT-VARIABLE: "created_share"
+
+          - NAME: "Update database with the action performed. Some ficticious serial number. This can only be applied to domain artifacts that have been created or modified, and only after playbook run"
+
+            ACTION: UPDATE-OUTPUT
+
+            ACTION_PARAMS:
+
+              - VARIABLE:  new-share
+
+              - VALUE:
+
+                  - serial-number: "created_share.serial_number"
+
+          - NAME: "Finish execution"
+
+            ACTION: END
+
+            ACTION_PARAMS:
+
+              - STATUS: SUCCESS|FAILED
+
+              - ERROR_MESSAGE: ""
+
+ 
+
+      - CONDITION: ELSE
+
+        ACTIONS_WHEN_TRUE:
+
+          - NAME: "Call playbook to create volume and share"
+
+            ACTION: ANSIBLE-RUN
+
+            ACTION_PARAMS:
+
+                - PLAYBOOK: "Create share and volume"
+
+                - INPUTS:
+
+                    - share-name: "user_input.name-for-share"
+
+                    - share-size: "user_input.required-size"
+
+                    - volume-name: "vol-to-use.name"
+
+                    - controller-name: "vol-to-use.host-array.name"
+
+                - OUTPUT-VARIABLE: "created_share"
+
+          - NAME: "Update database with the action performed. Some ficticious serial number. This can only be applied to domain artifacts that have been created or modified"
+
+            ACTION: UPDATE-OUTPUT
+
+            ACTION_PARAMS:
+
+              - VARIABLE:  new-share
+
+              - VALUE:
+
+                  - serial-number: "created_share.serial_number"
+
+          - NAME: "Finish execution"
+
+            ACTION: END
+
+            ACTION_PARAMS:
+
+              - STATUS: SUCCESS|FAILED
+
+              - ERROR_MESSAGE: ""
